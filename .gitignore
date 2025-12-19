@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.next/
+node_modules/
+*.db
+*.log
+yolo11n.pt
+.DS_Store
