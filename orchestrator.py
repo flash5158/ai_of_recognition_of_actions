@@ -50,7 +50,7 @@ class Orchestrator:
             "conf_threshold": 0.40,
             "loitering_time": 5.0,
             "intrusion_zone": [300, 200, 980, 520],
-            "draw_on_server": False # PRO: Client-side rendering is 10x faster
+            "draw_on_server": True # FORCE ON: Ensure AI overlay is visible in video stream
         }
         
         self.incident_logs = []
@@ -61,6 +61,13 @@ class Orchestrator:
         self.thread = threading.Thread(target=self._process_loop)
         self.thread.daemon = True
         self.thread.start()
+
+    def stop(self):
+        self.running = False
+        self.cam_running = False
+        if hasattr(self, 'thread') and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        print("INFO: Orchestrator stopped.")
 
     def toggle_camera(self, state: bool):
         print(f"DEBUG: toggle_camera requesting lock for state={state}")
@@ -97,9 +104,24 @@ class Orchestrator:
                         current_idx = idx
                         self.telemetry["camera_status"] = f"CONECTADA [DEV_{idx}]"
                         break
+                
                 if not cap or not cap.isOpened():
-                    self.telemetry["camera_status"] = "ERROR: SIN_ACCESO_A_WEBCAM"
-                    time.sleep(2)
+                    self.telemetry["camera_status"] = "ERROR: SIN_ACCESO_A_WEBCAM (USANDO FALLBACK)"
+                    # Synthetic fallback
+                    cap = None
+                    self.cam_running = True 
+                    
+                    # Create Error Frame
+                    syn_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+                    cv2.putText(syn_frame, "ERROR: CAMARA NO ENCONTRADA", (300, 360), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
+                    cv2.putText(syn_frame, f"REVISAR PERMISOS/CONEXION - {time.time():.1f}", (350, 420), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                    
+                    self.latest_frame = syn_frame
+                    
+                    with self.lock:
+                        self.telemetry["cam_active"] = True
+                    
+                    time.sleep(0.1)
                     continue
 
             try:
@@ -256,7 +278,11 @@ class Orchestrator:
                     small_frame = cv2.resize(self.latest_frame, (640, 360))
                     ret, buffer = cv2.imencode('.jpg', small_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
                     if ret:
-                        data["frame"] = base64.b64encode(buffer).decode('utf-8')
+                        b64_str = base64.b64encode(buffer).decode('utf-8')
+                        data["frame"] = b64_str
+                        # Debug: Print first 50 chars to verify data exists once in a while
+                        # if time.time() % 2 < 0.1: 
+                        #     print(f"DEBUG: Fame encoded. detection_count={len(data['detections'])} size={len(b64_str)}")
                 except Exception as e:
                     print(f"Frame encoding error: {e}")
                     
