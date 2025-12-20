@@ -28,7 +28,7 @@ class Orchestrator:
             self.ingest_worker = None
         
         self.running = False
-        self.cam_running = True
+        self.cam_running = False # Start offline to prevent startup hang
         self.latest_frame = None
         self.lock = threading.Lock()
         
@@ -40,7 +40,7 @@ class Orchestrator:
             "camera_status": "INICIANDO_SISTEMA...",
             "latest_analysis": "SISTEMA LISTO // ESPERANDO OBJETIVO",
             "detections": [], # Raw data for client-side SVG/Canvas rendering
-            "cam_active": True,
+            "cam_active": False,
             "db_mode": self.db.mode, # "MILVUS" or "SQLITE"
             "db_active": self.db.active or (self.db.mode == "SQLITE")
         }
@@ -61,24 +61,20 @@ class Orchestrator:
         self.thread.daemon = True
         self.thread.start()
 
-    def stop(self):
-        self.running = False
-        if hasattr(self, 'thread'):
-            self.thread.join(timeout=1.0)
-        # stop background worker
-        try:
-            if hasattr(self, 'ingest_worker') and self.ingest_worker:
-                self.ingest_worker.stop()
-        except Exception:
-            pass
-
     def toggle_camera(self, state: bool):
+        print(f"DEBUG: toggle_camera requesting lock for state={state}")
         with self.lock:
+            print("DEBUG: toggle_camera ACQUIRED lock")
             self.cam_running = state
-            self.telemetry["cam_active"] = state
+            # NOTE: We do NOT force self.telemetry["cam_active"] here.
+            # We let the _process_loop update it when it actually acquires/releases the camera.
+            # This prevents "fake active" states.
             if not state:
-                self.telemetry["camera_status"] = "STANDBY // MOTOR_OFF"
-                self.latest_frame = None
+                self.telemetry["camera_status"] = "DETENIENDO_MOTOR..."
+                # We leave latest_frame until loop clears it or we overwrite it, 
+                # but clearing it here gives immediate 'frozen' feedback if desirable.
+                # Let's not clear it yet to avoid black flash.
+        print("DEBUG: toggle_camera RELEASED lock")
 
     def _process_loop(self):
         cap = None
@@ -125,7 +121,9 @@ class Orchestrator:
                 
                 # Collect telemetry updates and DB inserts locally to avoid long lock holds
                 local_inserts = []
+                # print("DEBUG: process_loop requesting lock")
                 with self.lock:
+                    # print("DEBUG: process_loop ACQUIRED lock")
                     self.telemetry["detections"] = []
                     self.telemetry["track_count"] = 0
 
@@ -200,13 +198,21 @@ class Orchestrator:
                 self.telemetry["latency"] = round((time.time() - start_proc) * 1000, 1)
 
                 self.latest_frame = processed_frame
+                
+                # SYNC: Ensure telemetry reflects true hardware status
+                with self.lock:
+                    self.telemetry["cam_active"] = True
 
             except Exception as e:
                 print(f"ALERTA_IA: Error en loop de procesamiento: {e}")
                 time.sleep(0.1)
-
+                
+            # If loop is running but we hit exception, we are still trying to be active
+            
+        # End of loop
         if cap:
             cap.release()
+        self.telemetry["cam_active"] = False
 
     def _behavior_core(self, box, pid):
         center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
