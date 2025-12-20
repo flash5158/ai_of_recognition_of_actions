@@ -8,3 +8,8 @@ fastapi
 uvicorn
 python-multipart
 google-generativeai
+websockets
+
+torch
+torchvision
+onnxruntime

@@ -7,6 +7,10 @@ import asyncio
 import time
 import json
 from contextlib import asynccontextmanager
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("panoptes.server")
 
 # Global Orchestrator
 panoptes = Orchestrator(source=0)
@@ -53,6 +57,19 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(0.033)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+    except Exception as e:
+        # Log unexpected errors and ensure cleanup
+        print(f"WS_ERROR: {e}")
+        try:
+            manager.disconnect(websocket)
+        except Exception:
+            pass
+    finally:
+        # defensive disconnect in case it's still connected
+        try:
+            manager.disconnect(websocket)
+        except Exception:
+            pass
 
 def generate_frames():
     while True:
@@ -86,13 +103,23 @@ async def update_settings(request: Request):
             panoptes.settings[key] = value
     return {"status": "success", "settings": panoptes.settings}
 
+@app.get("/vault")
+def get_vault_data(limit: int = 50):
+    """
+    Fetch historical detection data from the Milvus Intelligence Vault.
+    """
+    return panoptes.get_vault_data(limit=limit)
+
+@app.get("/analytics")
+def get_analytics():
+    """
+    Fetch system-wide behavior analytics and trends.
+    """
+    return panoptes.get_analytics_summary()
+
 @app.get("/history")
 def get_history():
     return panoptes.get_history()
-
-@app.get("/database")
-def get_database():
-    return panoptes.get_db_entries()
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

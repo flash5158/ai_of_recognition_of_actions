@@ -14,6 +14,13 @@ class YOLODetector:
         Detect objects in a frame.
         Returns a list of detections using the Ultralytics results object.
         """
-        # Run inference
-        results = self.model(frame, verbose=False)
-        return results[0] # Return the first result (single frame)
+        # Run inference with defensive handling — return an empty-like result on failure
+        try:
+            results = self.model(frame, verbose=False)
+            return results[0]  # Return the first result (single frame)
+        except Exception:
+            class _EmptyResult:
+                def __init__(self):
+                    self.boxes = []
+
+            return _EmptyResult()

@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Script de Inicio Todo-en-Uno para PANOPTES
+# Script de Inicio Todo-en-Uno para CHALAS AI RECOGNITION
 
 echo "============================================="
-echo "   INICIANDO SISTEMA DE VIGILANCIA PANOPTES  "
+echo "   INICIANDO CHALAS AI RECOGNITION SYSTEM   "
 echo "============================================="
 
 # 1. Verificar Entorno Python
