@@ -246,6 +246,20 @@ class Orchestrator:
     def get_telemetry(self):
         data = self.telemetry.copy()
         data["logs"] = self.incident_logs[-15:]
+        
+        # WS Video Pivot: Embed frame directly
+        with self.lock:
+            if self.latest_frame is not None and self.cam_running:
+                try:
+                    # Optimize for WS transmission: Resize & Compress
+                    small_frame = cv2.resize(self.latest_frame, (640, 360))
+                    ret, buffer = cv2.imencode('.jpg', small_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                    if ret:
+                        import base64
+                        data["frame"] = base64.b64encode(buffer).decode('utf-8')
+                except Exception as e:
+                    print(f"Frame encoding error: {e}")
+                    
         return data
 
     def get_vault_data(self, limit=50):
