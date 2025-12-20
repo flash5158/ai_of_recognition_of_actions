@@ -30,7 +30,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://app:8000
+      # Use localhost because the browser (client) needs to reach the backend, 
+      # and from the browser's perspective, both are on localhost.
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       - app
       - milvus

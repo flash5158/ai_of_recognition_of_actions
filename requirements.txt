@@ -13,3 +13,6 @@ websockets
 torch
 torchvision
 onnxruntime
+ffmpeg-python
+httpx
+pydantic-settings

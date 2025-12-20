@@ -11,6 +11,7 @@ from detectors.action_classifier import ActionClassifier
 from detectors.embedding import EmbeddingExtractor
 from database.vector_store import VectorDB
 from database.ingest_worker import IngestWorker
+import base64
 
 class Orchestrator:
     def __init__(self, source=0):
@@ -255,7 +256,6 @@ class Orchestrator:
                     small_frame = cv2.resize(self.latest_frame, (640, 360))
                     ret, buffer = cv2.imencode('.jpg', small_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
                     if ret:
-                        import base64
                         data["frame"] = base64.b64encode(buffer).decode('utf-8')
                 except Exception as e:
                     print(f"Frame encoding error: {e}")
