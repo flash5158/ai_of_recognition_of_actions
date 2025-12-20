@@ -40,7 +40,9 @@ class Orchestrator:
             "camera_status": "INICIANDO_SISTEMA...",
             "latest_analysis": "SISTEMA LISTO // ESPERANDO OBJETIVO",
             "detections": [], # Raw data for client-side SVG/Canvas rendering
-            "cam_active": True
+            "cam_active": True,
+            "db_mode": self.db.mode, # "MILVUS" or "SQLITE"
+            "db_active": self.db.active or (self.db.mode == "SQLITE")
         }
         
         self.settings = {

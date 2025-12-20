@@ -5,14 +5,31 @@ class ActionClassifier:
     Clasificador de acciones basado en reglas geométricas sobre landmarks de YOLO-Pose (COCO format).
     Acciones soportadas: PARADO, SENTADO, SALUDANDO, CAMINANDO, INACTIVO.
     """
-    def __init__(self):
-        self.history = {} 
+    def __init__(self, history_size=8):
+        # Buffer de historial para suavizado temporal (evita flickering)
+        self.history = []
+        self.history_size = history_size
 
     def classify(self, lm_list):
         """
-        Recibe una lista de landmarks [id, x, y, conf] y retorna una etiqueta de acción.
+        Recibe una lista de landmarks [id, x, y, conf] y retorna una etiqueta de acción suavizada.
         Usa índices COCO (17 puntos).
         """
+        raw_action = self._classify_frame(lm_list)
+        
+        self.history.append(raw_action)
+        if len(self.history) > self.history_size:
+            self.history.pop(0)
+            
+        # Votación simple (Moda)
+        if not self.history:
+            return "DESCONOCIDO"
+            
+        from collections import Counter
+        most_common = Counter(self.history).most_common(1)[0][0]
+        return most_common
+
+    def _classify_frame(self, lm_list):
         # COCO tiene 17 puntos. MediaPipe tenía 33.
         if not lm_list or len(lm_list) < 17:
             return "DESCONOCIDO"
@@ -43,23 +60,15 @@ class ActionClassifier:
         r_wrist = get_pt(10)
 
         # 1. Detectar "SALUDANDO" (Waving)
-        # Si la muñeca está por encima del hombro (y menor, coords de pixel)
-        # COCO keypoints are usually pixel coords (0,0 is top-left)
         if l_wrist[1] < l_shoulder[1] or r_wrist[1] < r_shoulder[1]:
-            # Chequear que esté cerca de la cabeza/nariz para filtrar falsos positivos
             if (l_wrist[1] < nose[1] + 20) or (r_wrist[1] < nose[1] + 20):
                 return "SALUDANDO"
 
         # 2. Detectar "SENTADO" vs "PARADO"
-        # Altura vertical del muslo abs(knee.y - hip.y)
         l_thigh_vert = abs(l_knee[1] - l_hip[1])
         r_thigh_vert = abs(r_knee[1] - r_hip[1])
-        
-        # Referencia: altura del torso (shoulder a hip)
         torso_h = abs(l_shoulder[1] - l_hip[1]) + abs(r_shoulder[1] - r_hip[1])
         
-        # Si el muslo está "corto" verticalmente, probablemente está horizontal (hacia la cámara o de lado sentado)
-        # Factor ajustado para YOLO
         if torso_h > 0:
             if (l_thigh_vert < 0.6 * (torso_h / 2)) or (r_thigh_vert < 0.6 * (torso_h / 2)):
                  return "SENTADO"
@@ -67,7 +76,6 @@ class ActionClassifier:
         # 3. Detectar "CAMINANDO" vs "PARADO"
         ankle_dist = np.linalg.norm(l_ankle - r_ankle)
         shoulder_width = np.linalg.norm(l_shoulder - r_shoulder)
-        
         if shoulder_width > 0 and ankle_dist > 1.3 * shoulder_width:
              return "CAMINANDO"
 
