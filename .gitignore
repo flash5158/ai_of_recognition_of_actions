@@ -6,4 +6,5 @@ node_modules/
 *.db
 *.log
 yolo11n.pt
+yolo11n-pose.pt
 .DS_Store
