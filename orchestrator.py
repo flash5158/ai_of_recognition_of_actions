@@ -9,6 +9,7 @@ from detectors.yolo_detector import YOLODetector
 from detectors.pose_estimator import PoseEstimator
 from detectors.action_classifier import ActionClassifier
 from detectors.embedding import EmbeddingExtractor
+from detectors.emotion_detector import EmotionDetector
 from database.vector_store import VectorDB
 from database.ingest_worker import IngestWorker
 import base64
@@ -20,6 +21,7 @@ class Orchestrator:
         self.yolo = YOLODetector()
         self.pose = PoseEstimator()
         self.action_classifier = ActionClassifier()
+        self.emotion_detector = EmotionDetector()
         self.embedding = EmbeddingExtractor(dim=128)
         self.db = VectorDB()
         # Start background ingest worker (offloads DB IO)
@@ -29,7 +31,7 @@ class Orchestrator:
             self.ingest_worker = None
         
         self.running = False
-        self.cam_running = False # Start offline to prevent startup hang
+        self.cam_running = True # Force ON at startup
         self.latest_frame = None
         self.lock = threading.Lock()
         
@@ -54,6 +56,10 @@ class Orchestrator:
         }
         
         self.incident_logs = []
+        
+        # Optimization: Emotion Cache
+        self.frame_count = 0
+        self.cached_emotions = []
 
     def start(self):
         if self.running: return
@@ -68,6 +74,67 @@ class Orchestrator:
         if hasattr(self, 'thread') and self.thread.is_alive():
             self.thread.join(timeout=1.0)
         print("INFO: Orchestrator stopped.")
+
+    def _try_open_camera_with_timeout(self, idx: int, timeout: float = 3.0):
+        """
+        Attempt to open camera with timeout to prevent deadlock.
+        Returns: VideoCapture object if successful, None if timeout/failure
+        """
+        result = {'cap': None, 'opened': False}
+        
+        def _open():
+            try:
+                print(f"[CAM_INIT] Attempting VideoCapture({idx})...")
+                cap = cv2.VideoCapture(idx)
+                result['cap'] = cap
+                result['opened'] = cap.isOpened()
+                print(f"[CAM_INIT] Device {idx}: isOpened={result['opened']}")
+            except Exception as e:
+                print(f"[CAM_INIT] Device {idx} exception: {e}")
+        
+        thread = threading.Thread(target=_open, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
+        
+        if thread.is_alive():
+            print(f"[CAM_INIT] Device {idx} TIMEOUT after {timeout}s - likely blocked/in-use")
+            return None
+        
+        if result['opened']:
+            print(f"[CAM_INIT] ✅ Device {idx} opened successfully")
+            return result['cap']
+        else:
+            print(f"[CAM_INIT] ❌ Device {idx} failed to open")
+            if result['cap']:
+                result['cap'].release()
+            return None
+
+    def _read_frame_with_timeout(self, cap, timeout: float = 2.0):
+        """
+        Read frame from camera with timeout to prevent deadlock.
+        Returns: (success: bool, frame: np.ndarray or None)
+        """
+        result = {'ret': False, 'frame': None, 'done': False}
+        
+        def _read():
+            try:
+                ret, frame = cap.read()
+                result['ret'] = ret
+                result['frame'] = frame
+                result['done'] = True
+            except Exception as e:
+                print(f"[CAM_READ] Exception during read: {e}")
+                result['done'] = True
+        
+        thread = threading.Thread(target=_read, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
+        
+        if not result['done']:
+            print(f"[CAM_READ] ⏱️ Frame read TIMEOUT after {timeout}s - camera blocked!")
+            return False, None
+        
+        return result['ret'], result['frame']
 
     def toggle_camera(self, state: bool):
         print(f"DEBUG: toggle_camera requesting lock for state={state}")
@@ -98,42 +165,74 @@ class Orchestrator:
                 continue
 
             if cap is None or not cap.isOpened():
+                print("[LOOP] Camera not open, attempting initialization...")
+                cam_opened = False
+                
+                # Try devices with timeout to prevent deadlock
                 for idx in [current_idx, 0, 1, 2]:
-                    cap = cv2.VideoCapture(idx)
-                    if cap.isOpened():
+                    print(f"[LOOP] Trying device {idx} with 3s timeout...")
+                    cap = self._try_open_camera_with_timeout(idx, timeout=3.0)
+                    
+                    if cap and cap.isOpened():
                         current_idx = idx
                         self.telemetry["camera_status"] = f"CONECTADA [DEV_{idx}]"
+                        cam_opened = True
+                        print(f"[LOOP] ✅ Camera {idx} connected successfully!")
                         break
+                    elif cap:
+                        # Cap was returned but not opened, release it
+                        cap.release()
+                        cap = None
                 
-                if not cap or not cap.isOpened():
-                    self.telemetry["camera_status"] = "ERROR: SIN_ACCESO_A_WEBCAM (USANDO FALLBACK)"
-                    # Synthetic fallback
-                    cap = None
-                    self.cam_running = True 
-                    
-                    # Create Error Frame
-                    syn_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-                    cv2.putText(syn_frame, "ERROR: CAMARA NO ENCONTRADA", (300, 360), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
-                    cv2.putText(syn_frame, f"REVISAR PERMISOS/CONEXION - {time.time():.1f}", (350, 420), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                    
-                    self.latest_frame = syn_frame
-                    
-                    with self.lock:
-                        self.telemetry["cam_active"] = True
+                if not cam_opened:
+                    print("[LOOP] ❌ All camera devices failed/timeout. Retrying in 2s...")
+                    self.telemetry["camera_status"] = "ERROR: SOFTWARE_BLOCK_OR_NO_CAM"
+                    # self.cam_running = False  <-- STOP DISABLING IT
+                    time.sleep(2.0)
+                    continue
+
+            # --- FRAME READING LOOP ---
+            print(f"[LOOP] 🟢 Camera Loop Start.")
+            
+            empty_frame_count = 0
+            
+            while self.cam_running and cap and cap.isOpened():
+                start_time = time.time()
+                start_proc = time.time()
+                ret, frame = cap.read()
+                
+                if not ret or frame is None:
+                    empty_frame_count += 1
+                    if empty_frame_count % 30 == 0:
+                        print(f"[LOOP] ⚠️ Camera is OPEN but returning EMPTY frames (Count: {empty_frame_count}). Possible Privacy Block.")
+                        self.telemetry["camera_status"] = "ERROR: PERMISO_DENEGADO_MACOS?"
                     
                     time.sleep(0.1)
                     continue
+                
+                # Reset counter on success
+                empty_frame_count = 0
+                self.telemetry["camera_status"] = "ONLINE_NORMAL"
 
-            try:
-                start_proc = time.time()
-                ret, frame = cap.read()
-                if not ret:
-                    time.sleep(0.01)
-                    continue
+
+                # Log successful frame every 100 frames to avoid spam
+                if int(time.time() * 30) % 100 == 0:
+                    print(f"[LOOP] ✅ Frame captured: {frame.shape}")
 
                 # --- PILELINE IA REAL ---
+                self.frame_count += 1
+                
+                # 1. Object Detection (YOLO)
                 detections = self.yolo.detect(frame)
                 
+                # 2. Emotion Detection (Optimized: Every 4 frames)
+                if self.frame_count % 4 == 0:
+                    try:
+                        self.cached_emotions = self.emotion_detector.detect(frame)
+                    except Exception as e:
+                        print(f"WARN: Emotion detection failed: {e}")
+                        self.cached_emotions = []
+
                 # Copy frame for processing (only if server drawing is needed)
                 processed_frame = frame.copy()
                 if self.settings["draw_on_server"]:
@@ -167,25 +266,40 @@ class Orchestrator:
                             # Action Recognition
                             action_label = "DESCONOCIDO"
                             if lm_list:
-                                # We need to map which landmarks belong to this person box. 
-                                # For simplicity in single-person scenarios we use the full list, 
-                                # but in multi-person we might need more complex matching. 
-                                # Assuming the pose estimator returns the 'most prominent' person or we simply pass the full frame logic.
-                                # Since PoseEstimator in this codebase seems to wrap MP Pose (single person by default in standard MP unless configured),
-                                # we will use the single result for the current detected box if it overlaps.
-                                # Optimization: Just classify the robust single pose result for now.
                                 action_label = self.action_classifier.classify(lm_list)
+
+                            # Emotion Matching
+                            emotion_label = "NEUTRAL"
+                            emotion_conf = 0.0
+                            
+                            # Find matching face
+                            # Simple heuristic: Face center is within body box and in top 1/3 of body
+                            for face in self.cached_emotions:
+                                f_box = face["box"] # [x, y, w, h]
+                                fx, fy = f_box[0] + f_box[2]/2, f_box[1] + f_box[3]/2
+                                
+                                # Check if face center is inside person box
+                                if x1 < fx < x2 and y1 < fy < y2:
+                                    emotion_label = face["emotion"]
+                                    emotion_conf = face["conf"]
+                                    break
 
                             # Export raw data for high-performance React UI
                             self.telemetry["detections"].append({
                                 "id": i,
                                 "box": [x1, y1, x2, y2],
                                 "conf": round(conf, 2),
-                                "action": action_label
+                                "action": action_label,
+                                "emotion": emotion_label, # Add emotion to telemetry
+                                "emotion_conf": round(emotion_conf, 2),
+                                "landmarks": lm_list if lm_list else [] # Export skeleton
                             })
                             
                             # Actualizar texto de análisis en tiempo real
-                            self.telemetry["latest_analysis"] = f"SUJETO DETECTADO: {action_label}"
+                            if emotion_label != "NEUTRAL":
+                                self.telemetry["latest_analysis"] = f"SUJETO DETECTADO: {action_label} | EMOCION: {emotion_label}"
+                            else:
+                                self.telemetry["latest_analysis"] = f"SUJETO DETECTADO: {action_label}"
 
                             if self.settings["draw_on_server"]:
                                 cv2.rectangle(processed_frame, (x1, y1), (x2, y2), (246, 130, 59), 1)
@@ -226,11 +340,9 @@ class Orchestrator:
                 with self.lock:
                     self.telemetry["cam_active"] = True
 
-            except Exception as e:
-                print(f"ALERTA_IA: Error en loop de procesamiento: {e}")
-                time.sleep(0.1)
-                
-            # If loop is running but we hit exception, we are still trying to be active
+            # except Exception as e:
+            #     print(f"ALERTA_IA: Error en loop de procesamiento: {e}")
+            #     time.sleep(0.1)
             
         # End of loop
         if cap:
@@ -266,6 +378,23 @@ class Orchestrator:
             ret, buffer = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             return buffer.tobytes()
 
+    def _clean_data(self, data):
+        """
+        Recursively convert numpy types to native Python types for JSON serialization.
+        """
+        if isinstance(data, dict):
+            return {k: self._clean_data(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._clean_data(v) for v in data]
+        elif isinstance(data, (np.integer, np.int64, np.int32)):
+            return int(data)
+        elif isinstance(data, (np.floating, np.float64, np.float32)):
+            return float(data)
+        elif isinstance(data, np.ndarray):
+            return self._clean_data(data.tolist())
+        else:
+            return data
+
     def get_telemetry(self):
         data = self.telemetry.copy()
         data["logs"] = self.incident_logs[-15:]
@@ -280,26 +409,25 @@ class Orchestrator:
                     if ret:
                         b64_str = base64.b64encode(buffer).decode('utf-8')
                         data["frame"] = b64_str
-                        # Debug: Print first 50 chars to verify data exists once in a while
-                        # if time.time() % 2 < 0.1: 
-                        #     print(f"DEBUG: Fame encoded. detection_count={len(data['detections'])} size={len(b64_str)}")
+                    else:
+                        print("ERROR: Frame encode returned False")
                 except Exception as e:
                     print(f"Frame encoding error: {e}")
+            else:
+                # If cam is running but no frame, send placeholder or nothing
+                # data["frame"] = "" 
+                pass
                     
-        return data
+        return self._clean_data(data)
 
     def get_vault_data(self, limit=50):
         # Browse the collection for historical data.
         # We use an empty filter to match all entries if supported, or a fallback query.
         try:
-            res = self.db.client.query(
-                collection_name=self.db.collection_name,
-                filter="",
-                limit=limit,
-                output_fields=["id", "person_id", "timestamp", "metadata"]
-            )
-            return res
-        except:
+            if self.db and (self.db.active or self.db.mode == "SQLITE"):
+                return self.db.query(expr="", limit=limit)
+            return []
+        except Exception:
             return []
 
     def get_analytics_summary(self):

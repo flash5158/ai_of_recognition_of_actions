@@ -1,11 +1,10 @@
 ultralytics==8.3.24
 mediapipe==0.10.14
-opencv-python==4.9.0.80
 opencv-contrib-python==4.9.0.80
 numpy==1.26.4
 pymilvus==2.5.18
 fastapi
-uvicorn
+uvicorn[standard]
 python-multipart
 google-generativeai
 websockets
@@ -16,3 +15,4 @@ onnxruntime
 ffmpeg-python
 httpx
 pydantic-settings
+pillow

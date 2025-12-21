@@ -2,20 +2,6 @@ from pymilvus import connections, FieldSchema, CollectionSchema, DataType, Colle
 import numpy as np
 import time
 import os
-
-
-class VectorDB:
-    def __init__(self, host=None, port=None, collection_name=None, dim=128):
-        """
-        Initialize a Milvus client connection and ensure the collection exists.
-        Reads `MILVUS_HOST` and `MILVUS_PORT` from environment when not provided.
-        """
-        self.collection_name = collection_name or os.getenv('MILVUS_COLLECTION', 'behaviors')
-        self.dim = dim or int(os.getenv('EMBED_DIM', 128))
-        host = host or os.getenv('MILVUS_HOST', '127.0.0.1')
-        port = port or os.getenv('MILVUS_PORT', '19530')
-        self.active = False
-
 import sqlite3
 import json
 

@@ -37,6 +37,8 @@ class ActionClassifier:
         # Helper para obtener coordenadas (x, y)
         def get_pt(idx):
             # lm_list[i] = [id, x, y, conf]
+            if idx >= len(lm_list):
+                return np.array([0.0, 0.0])
             return np.array([lm_list[idx][1], lm_list[idx][2]])
 
         # COCO Indices Mapping
@@ -59,10 +61,24 @@ class ActionClassifier:
         l_wrist = get_pt(9)
         r_wrist = get_pt(10)
 
-        # 1. Detectar "SALUDANDO" (Waving)
+        # 1. Detectar "MANOS ARRIBA" (Surrender/Amenaza)
+        # Ambas muñecas por encima de los ojos (Y menor a nose)
+        if (l_wrist[1] < nose[1] and r_wrist[1] < nose[1]):
+            return "MANOS_ARRIBA"
+
+        # 2. Detectar "TOUCHING FACE" (Nerviosismo/Pensando)
+        # Muñecas muy cerca de la nariz/orejas
+        # Distancia euclídea simple
+        if (np.linalg.norm(l_wrist - nose) < 50) or (np.linalg.norm(r_wrist - nose) < 50):
+            return "TOCANDO_CARA"
+
+        # 3. Detectar "SALUDANDO" (Waving)
+        # Una mano arriba, la otra abajo o ambas pero no estáticas (difícil sin movimiento, asumimos pose)
         if l_wrist[1] < l_shoulder[1] or r_wrist[1] < r_shoulder[1]:
+            # Si una está arriba y la otra abajo
             if (l_wrist[1] < nose[1] + 20) or (r_wrist[1] < nose[1] + 20):
-                return "SALUDANDO"
+                 if not (l_wrist[1] < nose[1] and r_wrist[1] < nose[1]): # No es manos arriba
+                    return "SALUDANDO"
 
         # 2. Detectar "SENTADO" vs "PARADO"
         l_thigh_vert = abs(l_knee[1] - l_hip[1])

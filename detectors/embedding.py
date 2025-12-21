@@ -20,7 +20,13 @@ class EmbeddingExtractor:
             from torchvision import transforms
 
             # small MobileNetV2 backbone without classifier
-            model = torchvision.models.mobilenet_v2(pretrained=True)
+            try:
+                # Try new API first (weights parameter)
+                from torchvision.models import MobileNet_V2_Weights
+                model = torchvision.models.mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
+            except (ImportError, AttributeError):
+                # Fallback for older torchvision versions
+                model = torchvision.models.mobilenet_v2(pretrained=True)
             # use feature extractor by removing classifier
             model.classifier = torch.nn.Identity()
             model.eval()
@@ -67,7 +73,11 @@ class EmbeddingExtractor:
                 # Export ONNX if not present
                 if not os.path.exists(onnx_path):
                     try:
-                        export_model = torchvision.models.mobilenet_v2(pretrained=True)
+                        try:
+                            from torchvision.models import MobileNet_V2_Weights
+                            export_model = torchvision.models.mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
+                        except (ImportError, AttributeError):
+                            export_model = torchvision.models.mobilenet_v2(pretrained=True)
                         export_model.classifier = torch.nn.Identity()
                         export_model.eval()
                         export_model.to('cpu')
@@ -117,10 +127,12 @@ class EmbeddingExtractor:
 
     def _pose_to_features(self, lm_list):
         feats = []
-        if not lm_list:
+        if not lm_list or len(lm_list) < 17:
             return [0.0] * 8
         try:
-            idx_map = {n: None for n in [11,12,15,16,23,24,27,28]}
+            # Map COCO indices to MediaPipe-like indices for compatibility
+            # COCO: 5,6=shoulders, 11,12=hips, 13,14=knees, 15,16=ankles
+            idx_map = {5: None, 6: None, 11: None, 12: None, 13: None, 14: None, 15: None, 16: None}
             for item in lm_list:
                 if item[0] in idx_map:
                     idx_map[item[0]] = (item[1], item[2])
@@ -129,14 +141,14 @@ class EmbeddingExtractor:
                 return float(np.linalg.norm(np.array(a)-np.array(b))) if a and b else 0.0
 
             feats.extend([
-                dist(idx_map[11], idx_map[12]),
-                dist(idx_map[23], idx_map[24]),
-                dist(idx_map[15], idx_map[16]),
-                dist(idx_map[27], idx_map[28]),
-                dist(idx_map[11], idx_map[23]),
-                dist(idx_map[12], idx_map[24]),
-                dist(idx_map[15], idx_map[27]),
-                dist(idx_map[16], idx_map[28])
+                dist(idx_map[5], idx_map[6]),     # shoulder width
+                dist(idx_map[11], idx_map[12]),   # hip width
+                dist(idx_map[13], idx_map[14]),   # knee spread
+                dist(idx_map[15], idx_map[16]),   # ankle spread
+                dist(idx_map[5], idx_map[11]),    # left torso
+                dist(idx_map[6], idx_map[12]),    # right torso
+                dist(idx_map[13], idx_map[15]),   # left leg
+                dist(idx_map[14], idx_map[16])    # right leg
             ])
         except Exception:
             return [0.0] * 8
