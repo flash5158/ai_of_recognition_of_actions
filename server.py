@@ -1,3 +1,6 @@
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 from fastapi import FastAPI, Response, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +11,10 @@ import time
 import json
 from contextlib import asynccontextmanager
 import logging
+
+import logging
+import warnings
+warnings.filterwarnings("ignore") # Suppress noisy deprecation warnings
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger("panoptes.server")

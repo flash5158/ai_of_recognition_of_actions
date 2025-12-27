@@ -4,7 +4,7 @@ import numpy as np
 import logging
 
 class PoseEstimator:
-    def __init__(self, model_path="yolo11n-pose.pt"):
+    def __init__(self, model_path="yolo11n-pose.pt", device=None):
         """
         Initialize YOLOv11 Pose Estimator.
         Replaces MediaPipe to ensure compatibility with Python 3.13 and robust detections.
@@ -15,6 +15,8 @@ class PoseEstimator:
         try:
             # Initialize with verbose=False to keep logs clean
             self.pose_model = YOLO(model_path)
+            if device:
+                self.pose_model.to(device)
             logging.getLogger("panoptes.pose").info("YOLOv11-Pose Online")
         except Exception as e:
             print(f"CRITICAL_ERROR: Failed to load YOLO Pose model: {e}")

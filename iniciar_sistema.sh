@@ -18,6 +18,7 @@ pip install -r requirements.txt > /dev/null 2>&1
 
 # 2. Iniciar Backend (Segundo plano)
 echo "[*] Iniciando Motor de IA (Backend)..."
+export PYTORCH_ENABLE_MPS_FALLBACK=1
 python3 server.py &
 BACKEND_PID=$!
 echo "    -> Backend corriendo en PID: $BACKEND_PID"

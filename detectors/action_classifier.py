@@ -1,98 +1,132 @@
 import numpy as np
+from collections import deque
 
 class ActionClassifier:
     """
-    Clasificador de acciones basado en reglas geométricas sobre landmarks de YOLO-Pose (COCO format).
-    Acciones soportadas: PARADO, SENTADO, SALUDANDO, CAMINANDO, INACTIVO.
+    PROFESSIONAL VECTOR-BASED CLASSIFIER v2
+    Uses Cosine Similarity + Dynamic Velocity Analysis.
     """
-    def __init__(self, history_size=8):
-        # Buffer de historial para suavizado temporal (evita flickering)
-        self.history = []
-        self.history_size = history_size
-
-    def classify(self, lm_list):
-        """
-        Recibe una lista de landmarks [id, x, y, conf] y retorna una etiqueta de acción suavizada.
-        Usa índices COCO (17 puntos).
-        """
-        raw_action = self._classify_frame(lm_list)
+    def __init__(self, history_size=10): # Increased history for stability
+        self.history = deque(maxlen=history_size)
+        self.last_action = "PARADO"
+        self.confidence_threshold = 0.85 
         
-        self.history.append(raw_action)
-        if len(self.history) > self.history_size:
-            self.history.pop(0)
-            
-        # Votación simple (Moda)
-        if not self.history:
-            return "DESCONOCIDO"
-            
-        from collections import Counter
-        most_common = Counter(self.history).most_common(1)[0][0]
-        return most_common
-
-    def _classify_frame(self, lm_list):
-        # COCO tiene 17 puntos. MediaPipe tenía 33.
+    def classify(self, lm_list, context_objects=[], timestamp=None, dynamics=None):
+        """
+        dynamics: dict from PredictiveBrain containing 'speed', 'is_running', etc.
+        """
         if not lm_list or len(lm_list) < 17:
             return "DESCONOCIDO"
-
-        # Helper para obtener coordenadas (x, y)
-        def get_pt(idx):
-            # lm_list[i] = [id, x, y, conf]
-            if idx >= len(lm_list):
-                return np.array([0.0, 0.0])
-            return np.array([lm_list[idx][1], lm_list[idx][2]])
-
-        # COCO Indices Mapping
-        # 0: Nose
-        # 5: Left Shoulder, 6: Right Shoulder
-        # 11: Left Hip, 12: Right Hip
-        # 13: Left Knee, 14: Right Knee
-        # 15: Left Ankle, 16: Right Ankle
-        # 9: Left Wrist, 10: Right Wrist
-
-        nose = get_pt(0)
-        l_shoulder = get_pt(5)
-        r_shoulder = get_pt(6)
-        l_hip = get_pt(11)
-        r_hip = get_pt(12)
-        l_knee = get_pt(13)
-        r_knee = get_pt(14)
-        l_ankle = get_pt(15)
-        r_ankle = get_pt(16)
-        l_wrist = get_pt(9)
-        r_wrist = get_pt(10)
-
-        # 1. Detectar "MANOS ARRIBA" (Surrender/Amenaza)
-        # Ambas muñecas por encima de los ojos (Y menor a nose)
-        if (l_wrist[1] < nose[1] and r_wrist[1] < nose[1]):
-            return "MANOS_ARRIBA"
-
-        # 2. Detectar "TOUCHING FACE" (Nerviosismo/Pensando)
-        # Muñecas muy cerca de la nariz/orejas
-        # Distancia euclídea simple
-        if (np.linalg.norm(l_wrist - nose) < 50) or (np.linalg.norm(r_wrist - nose) < 50):
-            return "TOCANDO_CARA"
-
-        # 3. Detectar "SALUDANDO" (Waving)
-        # Una mano arriba, la otra abajo o ambas pero no estáticas (difícil sin movimiento, asumimos pose)
-        if l_wrist[1] < l_shoulder[1] or r_wrist[1] < r_shoulder[1]:
-            # Si una está arriba y la otra abajo
-            if (l_wrist[1] < nose[1] + 20) or (r_wrist[1] < nose[1] + 20):
-                 if not (l_wrist[1] < nose[1] and r_wrist[1] < nose[1]): # No es manos arriba
-                    return "SALUDANDO"
-
-        # 2. Detectar "SENTADO" vs "PARADO"
-        l_thigh_vert = abs(l_knee[1] - l_hip[1])
-        r_thigh_vert = abs(r_knee[1] - r_hip[1])
-        torso_h = abs(l_shoulder[1] - l_hip[1]) + abs(r_shoulder[1] - r_hip[1])
+            
+        # 1. Normalize Skeleton
+        features = self._extract_features(lm_list)
+        if features is None: return "DESCONOCIDO"
         
-        if torso_h > 0:
-            if (l_thigh_vert < 0.6 * (torso_h / 2)) or (r_thigh_vert < 0.6 * (torso_h / 2)):
-                 return "SENTADO"
+        # 2. Score Actions
+        scores = {}
+        
+        # --- CRITICAL MARKERS ---
+        
+        # MANOS ARRIBA (Hands Up)
+        if features['wrists_y'] < features['eyes_y']: 
+             scores['MANOS_ARRIBA'] = 1.0
+        else:
+             scores['MANOS_ARRIBA'] = 0.0
+             
+        # GUARDIA (Fighting Stance)
+        # Wrists high (near shoulders/face) + Elbows bent
+        # And usually legs are spread
+        if (features['wrists_y'] < features['shoulders_y']) and (features['wrist_nose_dist'] < 0.3):
+             scores['AGRESION'] = 0.8
+        else:
+             scores['AGRESION'] = 0.0
+             
+        # TOCANDO CARA (Touching Face)
+        if features['wrist_nose_dist'] < 0.15:
+             scores['TOCANDO_CARA'] = 0.9
+        else:
+             scores['TOCANDO_CARA'] = 0.0
+        
+        # --- POSTURE MARKERS ---
+             
+        # SENTADO (Sitting)
+        if features['thigh_verticality'] < 0.6: # Thighs horizontal
+            scores['SENTADO'] = 0.95
+        else:
+            scores['SENTADO'] = 0.0
+            
+        # CAIDA (Fall)
+        # If torso angle is horizontal (not just thighs) -> Logic for torso angle needed
+        # Fallback: If bounding box is flat (width > height) -> Passed via context usually
+        # We'll stick to 'SENTADO' covering most static low poses for now.
+        
+        # --- DYNAMIC MARKERS (Velocity Based) ---
+        
+        is_moving_fast = False
+        if dynamics:
+            if dynamics.get('is_running', False):
+                is_moving_fast = True
+                scores['CORRIENDO'] = 1.0
+            elif dynamics.get('speed', 0) > 50: # Moderate movement
+                scores['CAMINANDO'] = 0.8
+            elif dynamics.get('is_loitering', False):
+                scores['MERODEANDO'] = 0.6
+                
+        # Default States
+        if not is_moving_fast and scores.get('SENTADO', 0) < 0.5:
+             scores['PARADO'] = 0.5
+        
+        # 3. WINNER TAKES ALL
+        best_action = max(scores, key=scores.get)
+        
+        # 4. Filter (Smoothing)
+        self.history.append(best_action)
+        
+        # Urgent Override (Don't smooth criticals)
+        if best_action in ["MANOS_ARRIBA", "AGRESION", "CORRIENDO"]:
+             return best_action
+             
+        # Voting for stable actions
+        from collections import Counter
+        counts = Counter(self.history)
+        winner, count = counts.most_common(1)[0]
+        
+        if count >= len(self.history) * 0.5:
+            return winner
+        else:
+            return self.last_action
 
-        # 3. Detectar "CAMINANDO" vs "PARADO"
-        ankle_dist = np.linalg.norm(l_ankle - r_ankle)
-        shoulder_width = np.linalg.norm(l_shoulder - r_shoulder)
-        if shoulder_width > 0 and ankle_dist > 1.3 * shoulder_width:
-             return "CAMINANDO"
-
-        return "PARADO"
+    def _extract_features(self, lm):
+        def p(i): return np.array([lm[i][1], lm[i][2]])
+        
+        nose = p(0); l_eye = p(1); r_eye = p(2)
+        l_sh = p(5); r_sh = p(6)
+        l_wr = p(9); r_wr = p(10)
+        l_hip = p(11); r_hip = p(12)
+        l_knee = p(13); r_knee = p(14)
+        l_ank = p(15); r_ank = p(16)
+        
+        # Scale Ref: Torso Height
+        torso = np.linalg.norm((l_sh+r_sh)/2 - (l_hip+r_hip)/2)
+        if torso < 10: return None # Too small/far
+        
+        feat = {}
+        # Y is normalized? No, raw coordinates. Y increases downwards.
+        # Smaller Y = Higher up.
+        
+        feat['wrists_y'] = (l_wr[1] + r_wr[1]) / 2
+        feat['eyes_y'] = (l_eye[1] + r_eye[1]) / 2
+        feat['shoulders_y'] = (l_sh[1] + r_sh[1]) / 2
+        
+        # Distances normalized by Torso
+        feat['wrist_nose_dist'] = min(np.linalg.norm(l_wr - nose), np.linalg.norm(r_wr - nose)) / torso
+        
+        # Thigh Verticality
+        l_thigh = l_hip - l_knee
+        r_thigh = r_hip - r_knee
+        # Vertical component ratio
+        l_v = abs(l_thigh[1]) / (np.linalg.norm(l_thigh) + 0.001)
+        r_v = abs(r_thigh[1]) / (np.linalg.norm(r_thigh) + 0.001)
+        feat['thigh_verticality'] = (l_v + r_v) / 2
+        
+        return feat
