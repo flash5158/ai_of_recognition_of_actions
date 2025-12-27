@@ -1,0 +1,206 @@
+@import "tailwindcss";
+
+
+:root {
+  --bg-onyx: #0a0a0b;
+  --bg-surface: rgba(22, 22, 24, 0.7);
+  --accent-primary: #3b82f6;
+  /* Sophisticated Blue */
+  --accent-success: #10b981;
+  --accent-warning: #f59e0b;
+  --accent-error: #ef4444;
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-bright: rgba(59, 130, 246, 0.3);
+  --text-main: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --glass-2: rgba(255, 255, 255, 0.03);
+  --accent-glow: rgba(59, 130, 246, 0.15);
+}
+
+body {
+  background-color: var(--bg-onyx);
+  color: var(--text-main);
+  font-family: var(--font-geist-sans), -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  margin: 0;
+  overflow: hidden;
+  background-image:
+    radial-gradient(circle at 10% 10%, rgba(59, 130, 246, 0.06) 0%, transparent 35%),
+    radial-gradient(circle at 90% 85%, rgba(16, 185, 129, 0.03) 0%, transparent 45%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%);
+}
+
+.apex-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  padding: 24px;
+  gap: 24px;
+  box-sizing: border-box;
+}
+
+.frost-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.015));
+  background-color: var(--bg-surface);
+  backdrop-filter: blur(36px) saturate(160%);
+  border: 1px solid var(--glass-2);
+  border-radius: 16px;
+  transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s ease;
+  overflow: hidden;
+}
+
+.frost-panel:hover {
+  border-color: var(--glass-border-bright);
+}
+
+.pro-header {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-family: var(--font-geist-sans), sans-serif;
+}
+
+.mono-data {
+  font-family: var(--font-geist-mono), monospace;
+  font-feature-settings: "tnum";
+}
+
+/* High-Performance Animations */
+.hardware-accel {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.scanline-subtle {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 55%, rgba(255, 255, 255, 0.002) 55%);
+  background-size: 100% 6px;
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.5;
+}
+
+/* Custom Scrollbar for Pro UI */
+.custom-scrollbar-pro {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.custom-scrollbar-pro::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar-pro::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar-pro::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+}
+
+/* Micro-states */
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-online {
+  background-color: var(--accent-success);
+  box-shadow: 0 0 12px var(--accent-success);
+}
+
+.status-busy {
+  background-color: var(--accent-warning);
+}
+
+/* Typography Scale */
+.t-h1 {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.t-h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.t-body {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.t-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+/* Layout Utilities */
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@keyframes pulse-subtle {
+  0% {
+    opacity: 0.8;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.8;
+  }
+}
+
+.animate-pulse-pro {
+  animation: pulse-subtle 3s infinite ease-in-out;
+}
+
+/* Glass card */
+.glass-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  box-shadow: 0 8px 40px rgba(2, 6, 23, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  border-radius: 18px;
+}
+
+/* Fullscreen viewer */
+.fullscreen-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.85));
+}
+
+.fullscreen-inner {
+  width: min(1200px, 95%);
+  height: min(720px, 85%);
+  border-radius: 18px;
+  overflow: hidden;
+  position: relative;
+}
+
+.lens-flare {
+  position: absolute;
+  right: -10%;
+  top: -10%;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle at 30% 30%, rgba(59, 130, 246, 0.2), transparent 30%), radial-gradient(circle at 70% 70%, rgba(16, 185, 129, 0.08), transparent 20%);
+  filter: blur(40px) saturate(140%);
+  pointer-events: none;
+}
